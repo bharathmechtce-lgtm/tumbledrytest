@@ -1,14 +1,13 @@
-# main.py - FINAL WORKING VERSION
+# main.py - RAW REQUESTS ONLY (NO SDK) - 70 LINES
 from fastapi import FastAPI, Request
 import asyncpg, os, json
-import requests  # <-- THIS WAS MISSING
-from openai import AzureOpenAI
+import requests  # <-- ADDED THIS
 from dotenv import load_dotenv
 
 load_dotenv()
 app = FastAPI()
 
-# Startup log - SYNC
+# Startup log
 @app.on_event("startup")
 def startup_event():
     print("\n=== ENV CHECK ===")
@@ -17,20 +16,14 @@ def startup_event():
         print(f"{k}: {v[:4] + '...' if v else 'MISSING'}")
     print("==================\n")
 
-# Azure Client - Force api-key
-client = AzureOpenAI(
-    api_key="dummy",
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    api_version="2024-02-01",
-    default_headers={"api-key": os.getenv("AZURE_OPENAI_KEY")}
-)
-
+# Schema
 SCHEMA = """
 Tables:
 - customers(phone, name, city, total_spend)
 - order_items(order_id, phone, sku, qty, price, order_date)
 """
 
+# Run SQL
 async def run_sql(sql: str):
     try:
         conn = await asyncpg.connect(os.getenv("DB_URL"))
@@ -40,10 +33,12 @@ async def run_sql(sql: str):
     except Exception as e:
         return [{"error": str(e)}]
 
+# Health check
 @app.get("/webhook")
 async def get():
     return {"status": "ok"}
 
+# Raw AI call
 def call_ai(prompt: str):
     url = f"{os.getenv('AZURE_OPENAI_ENDPOINT')}openai/deployments/{os.getenv('DEPLOYMENT_NAME')}/chat/completions?api-version=2024-02-01"
     headers = {
@@ -55,6 +50,7 @@ def call_ai(prompt: str):
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"].strip().strip("`").strip()
 
+# Webhook
 @app.post("/webhook")
 async def post(req: Request):
     text = (await req.form()).get("Body", "").strip()
