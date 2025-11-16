@@ -1,4 +1,3 @@
-# main.py
 from fastapi import FastAPI, Request
 import asyncpg, os, json
 from openai import AzureOpenAI
@@ -6,7 +5,6 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
 app = FastAPI()
 
 # ----------------------------------------------------------------------
@@ -19,20 +17,20 @@ async def startup_event():
     dep = os.getenv("DEPLOYMENT_NAME")
     db = os.getenv("DB_URL")
     print("\n=== ENV CHECK ===")
-    print(f"KEY:       {key[:4] + '...' if key else 'MISSING'}")
-    print(f"ENDPOINT:  {ep or 'MISSING'}")
-    print(f"DEPLOY:    {dep or 'MISSING'}")
-    print(f"DB_URL:    {db[:30] + '...' if db else 'MISSING'}")
+    print(f"KEY: {key[:4] + '...' if key else 'MISSING'}")
+    print(f"ENDPOINT: {ep or 'MISSING'}")
+    print(f"DEPLOY: {dep or 'MISSING'}")
+    print(f"DB_URL: {db[:30] + '...' if db else 'MISSING'}")
     print("==================\n")
 
 # ----------------------------------------------------------------------
-# Azure OpenAI Client (Foundry Fix: use api_key in header)
+# Azure OpenAI Client (Foundry Fix: use correct header)
 # ----------------------------------------------------------------------
 client = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_KEY"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     api_version="2024-02-01",
-    default_headers={"api_key": os.getenv("AZURE_OPENAI_KEY")}  # Foundry requires this
+    default_headers={"ms-azure-openai-key": os.getenv("AZURE_OPENAI_KEY")}  # FIXED
 )
 
 # ----------------------------------------------------------------------
@@ -57,7 +55,7 @@ async def run_sql(sql: str):
         return [{"error": str(e)}]
 
 # ----------------------------------------------------------------------
-# Health Check: GET /webhook (stops 405 errors)
+# Health Check: GET /webhook
 # ----------------------------------------------------------------------
 @app.get("/webhook")
 async def webhook_get():
@@ -80,6 +78,7 @@ async def webhook(req: Request):
             model=os.getenv("DEPLOYMENT_NAME"),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=150,
+            timeout=30
         )
         sql = sql_resp.choices[0].message.content.strip().strip("`").strip()
     except Exception as e:
@@ -103,6 +102,7 @@ async def webhook(req: Request):
                 "content": f"Data: {json.dumps(rows[:5])}\nQuestion: {text}\nAnswer in 2 lines, bold numbers:"
             }],
             max_tokens=100,
+            timeout=30
         )
         answer = answer_resp.choices[0].message.content.strip()
     except Exception as e:
