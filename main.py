@@ -3,13 +3,10 @@ import asyncpg, os, json
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 app = FastAPI()
 
-# ----------------------------------------------------------------------
-# Startup: Print ENV to confirm everything is loaded
-# ----------------------------------------------------------------------
+# Startup: Print ENV
 @app.on_event("startup")
 async def startup_event():
     key = os.getenv("AZURE_OPENAI_KEY")
@@ -23,47 +20,53 @@ async def startup_event():
     print(f"DB_URL: {db[:30] + '...' if db else 'MISSING'}")
     print("==================\n")
 
-# ----------------------------------------------------------------------
-# Azure OpenAI Client (Foundry Fix: use correct header)
-# ----------------------------------------------------------------------
+# Azure OpenAI Client (Foundry Fix)
 client = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_KEY"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     api_version="2024-02-01",
-    default_headers={"ms-azure-openai-key": os.getenv("AZURE_OPENAI_KEY")}  # FIXED
+    default_headers={"ms-azure-openai-key": os.getenv("AZURE_OPENAI_KEY")}
 )
 
-# ----------------------------------------------------------------------
-# DB Schema for LLM
-# ----------------------------------------------------------------------
 SCHEMA = """
 Tables:
 - customers(phone, name, city, total_spend)
 - order_items(order_id, phone, sku, qty, price, order_date)
 """
 
-# ----------------------------------------------------------------------
-# Run SQL on Neon
-# ----------------------------------------------------------------------
+# DB: Use Pool + Timeout (Fix connection error)
+pool = None
+@app.on_event("startup")
+async def create_pool():
+    global pool
+    pool = await asyncpg.create_pool(
+        os.getenv("DB_URL"),
+        min_size=1,
+        max_size=3,
+        command_timeout=60
+    )
+
+@app.on_event("shutdown")
+async def close_pool():
+    global pool
+    if pool:
+        await pool.close()
+
 async def run_sql(sql: str):
+    global pool
+    if not pool:
+        return [{"error": "DB pool not ready"}]
     try:
-        conn = await asyncpg.connect(os.getenv("DB_URL"))
-        result = await conn.fetch(sql)
-        await conn.close()
+        async with pool.acquire() as conn:
+            result = await conn.fetch(sql)
         return [dict(row) for row in result]
     except Exception as e:
         return [{"error": str(e)}]
 
-# ----------------------------------------------------------------------
-# Health Check: GET /webhook
-# ----------------------------------------------------------------------
 @app.get("/webhook")
 async def webhook_get():
-    return {"status": "ok", "message": "POST /webhook for Twilio"}
+    return {"status": "ok"}
 
-# ----------------------------------------------------------------------
-# Main Webhook: Handle SMS
-# ----------------------------------------------------------------------
 @app.post("/webhook")
 async def webhook(req: Request):
     form = await req.form()
@@ -71,7 +74,7 @@ async def webhook(req: Request):
     if not text:
         return {"text": "Empty message."}
 
-    # 1. Natural Language → SQL
+    # 1. Text → SQL
     prompt = f"{SCHEMA}\nConvert to SQL (SELECT only): '{text}'"
     try:
         sql_resp = client.chat.completions.create(
