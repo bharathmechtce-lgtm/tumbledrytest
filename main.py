@@ -1,4 +1,4 @@
-# main.py - FINAL WORKING VERSION
+# main.py - FINAL WORKING VERSION (NO SYNTAX ERRORS)
 from fastapi import FastAPI, Request
 import asyncpg, os, json
 import requests
@@ -8,17 +8,18 @@ from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI()
 
+# Startup log - MUST BE SYNC (not async)
 @app.on_event("startup")
-async def startup():
+def startup_event():  # <--- REMOVED async
     print("\n=== ENV CHECK ===")
-    for k in ["AZURE_OPENAI_KEY", "AZURE_OPENAI_ENDPOINT", "DEPLOYMENT_NAME"]:
+    for k in ["AZURE_OPENAI_KEY", "AZURE_OPENAI_ENDPOINT", "DEPLOYMENT_NAME", "DB_URL"]:
         v = os.getenv(k)
         print(f"{k}: {v[:4] + '...' if v else 'MISSING'}")
     print("==================\n")
 
-# Force api-key header for Foundry
+# Azure Client - Force api-key header
 client = AzureOpenAI(
-    api_key="dummy",  # Not used
+    api_key="dummy",
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     api_version="2024-02-01",
     default_headers={"api-key": os.getenv("AZURE_OPENAI_KEY")}
