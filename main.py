@@ -4,22 +4,20 @@ import asyncpg, os, json
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 
-# ----------------------------------------------------------------------
-# Load .env (Render injects env vars, but load_dotenv works locally too)
-# ----------------------------------------------------------------------
+# Load environment variables
 load_dotenv()
 
 app = FastAPI()
 
 # ----------------------------------------------------------------------
-# Startup logging – proves env vars are present
+# Startup: Print ENV to confirm everything is loaded
 # ----------------------------------------------------------------------
 @app.on_event("startup")
 async def startup_event():
     key = os.getenv("AZURE_OPENAI_KEY")
-    ep  = os.getenv("AZURE_OPENAI_ENDPOINT")
+    ep = os.getenv("AZURE_OPENAI_ENDPOINT")
     dep = os.getenv("DEPLOYMENT_NAME")
-    db  = os.getenv("DB_URL")
+    db = os.getenv("DB_URL")
     print("\n=== ENV CHECK ===")
     print(f"KEY:       {key[:4] + '...' if key else 'MISSING'}")
     print(f"ENDPOINT:  {ep or 'MISSING'}")
@@ -28,16 +26,17 @@ async def startup_event():
     print("==================\n")
 
 # ----------------------------------------------------------------------
-# Azure OpenAI client
+# Azure OpenAI Client (Foundry Fix: use api_key in header)
 # ----------------------------------------------------------------------
 client = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_KEY"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    api_version="2024-02-01"
+    api_version="2024-02-01",
+    default_headers={"api_key": os.getenv("AZURE_OPENAI_KEY")}  # Foundry requires this
 )
 
 # ----------------------------------------------------------------------
-# DB schema description for the LLM
+# DB Schema for LLM
 # ----------------------------------------------------------------------
 SCHEMA = """
 Tables:
@@ -46,7 +45,7 @@ Tables:
 """
 
 # ----------------------------------------------------------------------
-# Helper: run SQL against Neon
+# Run SQL on Neon
 # ----------------------------------------------------------------------
 async def run_sql(sql: str):
     try:
@@ -58,14 +57,14 @@ async def run_sql(sql: str):
         return [{"error": str(e)}]
 
 # ----------------------------------------------------------------------
-# Health-check GET (stops 405 errors from Twilio console)
+# Health Check: GET /webhook (stops 405 errors)
 # ----------------------------------------------------------------------
 @app.get("/webhook")
 async def webhook_get():
     return {"status": "ok", "message": "POST /webhook for Twilio"}
 
 # ----------------------------------------------------------------------
-# Main webhook – receives SMS from Twilio
+# Main Webhook: Handle SMS
 # ----------------------------------------------------------------------
 @app.post("/webhook")
 async def webhook(req: Request):
@@ -74,7 +73,7 @@ async def webhook(req: Request):
     if not text:
         return {"text": "Empty message."}
 
-    # ---- 1. Convert natural language → SQL -----------------
+    # 1. Natural Language → SQL
     prompt = f"{SCHEMA}\nConvert to SQL (SELECT only): '{text}'"
     try:
         sql_resp = client.chat.completions.create(
@@ -89,13 +88,13 @@ async def webhook(req: Request):
     if not sql.lower().startswith("select"):
         return {"text": "I can only answer data questions."}
 
-    # ---- 2. Execute SQL ------------------------------------
+    # 2. Run SQL
     rows = await run_sql(sql)
     if not rows or "error" in rows[0]:
         err = rows[0].get("error", "No data")
         return {"text": f"Query error: {err}"}
 
-    # ---- 3. Convert rows → natural-language answer ----------
+    # 3. Data → Answer
     try:
         answer_resp = client.chat.completions.create(
             model=os.getenv("DEPLOYMENT_NAME"),
