@@ -1,23 +1,23 @@
-# main.py - FINAL WORKING VERSION (NO SYNTAX ERRORS)
+# main.py - FINAL WORKING VERSION
 from fastapi import FastAPI, Request
 import asyncpg, os, json
-import requests
+import requests  # <-- THIS WAS MISSING
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 app = FastAPI()
 
-# Startup log - MUST BE SYNC (not async)
+# Startup log - SYNC
 @app.on_event("startup")
-def startup_event():  # <--- REMOVED async
+def startup_event():
     print("\n=== ENV CHECK ===")
     for k in ["AZURE_OPENAI_KEY", "AZURE_OPENAI_ENDPOINT", "DEPLOYMENT_NAME", "DB_URL"]:
         v = os.getenv(k)
         print(f"{k}: {v[:4] + '...' if v else 'MISSING'}")
     print("==================\n")
 
-# Azure Client - Force api-key header
+# Azure Client - Force api-key
 client = AzureOpenAI(
     api_key="dummy",
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
