@@ -1,17 +1,13 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Form
 import asyncpg, os, json, requests
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 app = FastAPI()
 
-@app.on_event("startup")
-def log():
-    print("\n=== ENV ===")
-    for k in ["AZURE_OPENAI_KEY","AZURE_OPENAI_ENDPOINT","DEPLOYMENT_NAME","DB_URL"]:
-        v = os.getenv(k)
-        print(f"{k}: {v[:4]+'...' if v else 'MISSING'}")
-    print("==========\n")
+# Add missing DEPLOYMENT_NAME
+os.environ['DEPLOYMENT_NAME'] = os.getenv('DEPLOYMENT_NAME', 'gpt4o-mini')
 
 SCHEMA = """
 Tables:
@@ -20,56 +16,66 @@ Tables:
 """
 
 async def run_sql(sql: str):
+    db_url = os.getenv("DB_URL")
+    if not db_url:
+        return [{"error": "DB_URL missing"}]
     try:
-        conn = await asyncpg.connect(os.getenv("DB_URL"))
+        conn = await asyncpg.connect(db_url)
         rows = await conn.fetch(sql)
         await conn.close()
         return [dict(r) for r in rows]
     except Exception as e:
         return [{"error": str(e)}]
 
+def ai(prompt: str) -> str:
+    endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+    key = os.getenv('AZURE_OPENAI_KEY')
+    deployment = os.getenv('DEPLOYMENT_NAME')
+    
+    if not all([endpoint, key, deployment]):
+        return f"Missing env: endpoint={bool(endpoint)}, key={bool(key)}, deployment={deployment}"
+    
+    url = f"{endpoint}openai/deployments/{deployment}/chat/completions?api-version=2024-02-01"
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": key
+    }
+    data = {
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 200
+    }
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=30)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip().strip("`").strip()
+    except Exception as e:
+        return f"AI Error: {str(e)}"
+
 @app.get("/webhook")
 async def get():
     return {"status": "ok"}
 
-def ai(prompt: str):
-    url = f"{os.getenv('AZURE_OPENAI_ENDPOINT')}openai/deployments/{os.getenv('DEPLOYMENT_NAME')}/chat/completions?api-version=2024-02-01"
-    headers = {
-        "Content-Type": "application/json",
-        "api-key": os.getenv("AZURE_OPENAI_KEY")
-    }
-    data = {
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 150
-    }
-    r = requests.post(url, headers=headers, json=data, timeout=30)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"].strip().strip("`").strip()
-
 @app.post("/webhook")
-async def post(req: Request):
-    form = await req.form()
+async def post(request: Request):
+    form = await request.form()
     text = form.get("Body", "").strip()
     if not text:
         return {"text": "Empty message."}
 
-    p1 = f"{SCHEMA}\nConvert to SQL (SELECT only): '{text}'"
-    try:
-        sql = ai(p1)
-    except Exception as e:
-        return {"text": f"AI SQL error: {str(e)}"}
-
+    # Step 1: AI → SQL
+    sql_prompt = f"{SCHEMA}\nConvert to SQL (SELECT only): '{text}'"
+    sql = ai(sql_prompt)
+    
     if not sql.lower().startswith("select"):
         return {"text": "Only data questions allowed."}
 
+    # Step 2: Run SQL
     rows = await run_sql(sql)
     if not rows or "error" in rows[0]:
-        return {"text": f"DB Error: {rows[0].get('error', 'No data')}"}
+        return {"text": f"DB Error: {rows[0].get('error', 'No data')}"} 
 
-    p2 = f"Data: {json.dumps(rows[:5])}\nQuestion: {text}\nAnswer in 2 lines, bold numbers:"
-    try:
-        ans = ai(p2)
-    except Exception as e:
-        ans = f"AI answer error: {str(e)}"
+    # Step 3: AI → Answer
+    summary_prompt = f"Data: {json.dumps(rows[:5])}\nQuestion: {text}\nAnswer in 2 lines. Bold numbers:"
+    answer = ai(summary_prompt)
 
-    return {"text": ans}
+    return {"text": answer}
