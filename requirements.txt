@@ -1,1 +1,6 @@
-+   (dropdown arrow)
+fastapi
+uvicorn
+pydantic
+asyncpg
+openai
+python-dotenv
