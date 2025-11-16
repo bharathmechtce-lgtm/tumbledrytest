@@ -4,3 +4,4 @@ pydantic
 asyncpg
 openai
 python-dotenv
+python-multipart
