@@ -1,7 +1,5 @@
 fastapi
 uvicorn
-pydantic
 asyncpg
-openai
 python-dotenv
-python-multipart
+requests
